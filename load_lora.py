@@ -1,5 +1,5 @@
 import argparse
-from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig, set_seed
+from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig, set_seed, pipeline
 from peft import PeftModel
 from safetensors.torch import load_file
 import torch
@@ -20,16 +20,24 @@ def load_lora_model(base_model_path, lora_path):
 	lora_model = PeftModel.from_pretrained(base_model, lora_path, device_map="auto")
 	return base_model, lora_model
 
-def eval(prompt, base_path, lora_path):
-    set_seed(42)
-    _, lora_model = load_lora_model(base_path, lora_path)
+def eval(prompt, is_lora, base_path, lora_path):
+    #had no impact on the output?
+    #set_seed(23)
+
+    if is_lora:
+        print("INFO: using lora model")
+        _, model = load_lora_model(base_path, lora_path)
+    else:
+        print("INFO: Only using base model")
+        model = load_base_model(base_path)
+
 	# Switch to evaluation mode
-    lora_model.eval()
+    model.eval()
 
     tokenizer = AutoTokenizer.from_pretrained(base_path)
-    inputs = tokenizer(prompt, return_tensors="pt").to("auto")
-    output = lora_model.generate(**inputs, max_new_tokens=300, do_sample=False)
-    print(tokenizer.decode(output[0], skip_special_tokens=True))
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    output = model.generate(**inputs, max_new_tokens=300, do_sample=False)
+    return tokenizer.decode(output[0], skip_special_tokens=True)
 
 def print_modules(module, base_path, lora_path):
     if module == "lora":
@@ -53,6 +61,12 @@ def print_weight_map(path):
     for key in tensors.keys():
         print(key)
 
+def run_ultravox(prompt):
+    print(f"prompt is {prompt}")
+    pipe = pipeline(model='fixie-ai/ultravox-v0_3', trust_remote_code=True)
+    output = pipe({'prompt': prompt}, max_new_tokens=30, do_sample=False)
+    print(output)
+
 def main():
     parser = argparse.ArgumentParser(description="A sample script with two commands and one argument each.")
 
@@ -67,7 +81,8 @@ def main():
     # Command one
     parser_one = subparsers.add_parser("generate", help="Execute command one")
     parser_one.add_argument("prompt", type=str, help="Argument for command one")
-    parser_one.set_defaults(func=lambda args: eval(args.prompt, args.model_path, args.lora_path))
+    parser_one.add_argument("--lora", type=bool, action=argparse.BooleanOptionalAction, default=True, help="with or without lora")
+    parser_one.set_defaults(func=lambda args: print(eval(args.prompt, args.lora, args.model_path, args.lora_path)))
 
     # Command two
     parser_two = subparsers.add_parser("print_modules", help="print modules")
@@ -78,6 +93,11 @@ def main():
     parser_three = subparsers.add_parser("print_weight_map", help="print weight map from weight file")
     parser_three.add_argument("--path", type=str, help="path of the file to load")
     parser_three.set_defaults(func=lambda args: print_weight_map(args.path))
+
+    # Command 4
+    parser_four = subparsers.add_parser("run_ultravox")
+    parser_four.add_argument("prompt", type=str)
+    parser_four.set_defaults(func=lambda args: run_ultravox(args.prompt))
 
     # Parse the arguments
     args = parser.parse_args()
