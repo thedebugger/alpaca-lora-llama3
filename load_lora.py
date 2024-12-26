@@ -10,14 +10,18 @@ import torch
 
 
 def load_base_model(base_model_path):
-    base_model = AutoModelForCausalLM.from_pretrained(base_model_path, device_map="auto")
+    base_model = AutoModelForCausalLM.from_pretrained(base_model_path, 
+                                                      torch_dtype=torch.bfloat16,
+                                                      device_map="auto")
     return base_model
 
 def load_lora_model(base_model_path, lora_path):
 	base_model = load_base_model(base_model_path)
 
 	# Load the LoRA adapter
-	lora_model = PeftModel.from_pretrained(base_model, lora_path, device_map="auto")
+	lora_model = PeftModel.from_pretrained(base_model, lora_path, 
+                                           torch_dtype=torch.bfloat16,
+                                           device_map="auto")
 	return base_model, lora_model
 
 def eval(prompt, is_lora, base_path, lora_path):
@@ -32,11 +36,27 @@ def eval(prompt, is_lora, base_path, lora_path):
         model = load_base_model(base_path)
 
 	# Switch to evaluation mode
+    print(f"INFO: model is loaded with precision {model.dtype}")
     model.eval()
 
     tokenizer = AutoTokenizer.from_pretrained(base_path)
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    output = model.generate(**inputs, max_new_tokens=300, do_sample=False)
+    #inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+
+    inputs = tokenizer.apply_chat_template([{
+        'role': 'user',
+        'content': f"{prompt} "
+        }],
+        return_tensors="pt",
+        add_generation_prompt=True).to(model.device)
+    print(tokenizer.decode(inputs[0]))
+
+    output = model.generate(inputs, 
+        max_new_tokens=1000, 
+        do_sample=False, 
+        pad_token_id=tokenizer.pad_token_id)
     return tokenizer.decode(output[0], skip_special_tokens=True)
 
 def print_modules(module, base_path, lora_path):
@@ -59,12 +79,18 @@ def print_weight_map(path):
     tensors = load_file(path)
     
     for key in tensors.keys():
-        print(key)
+        print(f"{key}")
 
 def run_ultravox(prompt):
     print(f"prompt is {prompt}")
-    pipe = pipeline(model='fixie-ai/ultravox-v0_3', trust_remote_code=True)
-    output = pipe({'prompt': prompt}, max_new_tokens=30, do_sample=False)
+    pipe = pipeline(model='fixie-ai/ultravox-v0_3', trust_remote_code=True, torch_dtype=torch.bfloat16)
+    turns = [
+        {
+            "role": "user",
+            "content": prompt
+        },
+    ]
+    output = pipe({'turns': turns}, max_new_tokens=100, do_sample=False)
     print(output)
 
 def main():
