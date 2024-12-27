@@ -6,6 +6,7 @@ from transformers import (
     pipeline,
     AutoModel,
     AutoProcessor,
+    BatchEncoding,
 )
 from peft import PeftModel
 from safetensors.torch import load_file
@@ -16,11 +17,6 @@ import torch
 #    print(name)
 
 
-def load_base_multi_model(base_model_path):
-
-    return base_model
-
-
 def load_base_model(base_model_path):
     base_model = AutoModelForCausalLM.from_pretrained(
         base_model_path, torch_dtype=torch.bfloat16, device_map="auto"
@@ -28,14 +24,17 @@ def load_base_model(base_model_path):
     return base_model
 
 
-def load_lora_model(base_model_path, lora_path):
-    base_model = load_base_model(base_model_path)
-
+def load_lora_model(base_model, lora_path):
     # Load the LoRA adapter
     lora_model = PeftModel.from_pretrained(
-        base_model, lora_path, torch_dtype=torch.bfloat16, device_map="auto"
+        base_model,
+        lora_path,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+        remote_code=True,
     )
-    return base_model, lora_model
+    print(lora_model.get_model_status())
+    return lora_model
 
 
 def eval(prompt, is_lora, base_path, lora_path):
@@ -44,7 +43,8 @@ def eval(prompt, is_lora, base_path, lora_path):
 
     if is_lora:
         print("INFO: using lora model")
-        _, model = load_lora_model(base_path, lora_path)
+        base_model = load_base_model(base_path)
+        model = load_lora_model(base_model, lora_path)
     else:
         print("INFO: Only using base model")
         model = load_base_model(base_path)
@@ -58,26 +58,22 @@ def eval(prompt, is_lora, base_path, lora_path):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    inputs = tokenizer.apply_chat_template(
+    inputs_str = tokenizer.apply_chat_template(
         [{"role": "user", "content": f"{prompt} "}],
-        return_tensors="pt",
         add_generation_prompt=True,
-    ).to(model.device)
-    print(tokenizer.decode(inputs[0]))
+        tokenize=False,
+    )
+    inputs: BatchEncoding = tokenizer(inputs_str, return_tensors="pt").to(model.device)
 
     output = model.generate(
-        inputs,
+        **inputs,
         max_new_tokens=1000,
         do_sample=False,
+        temperature=None,
+        top_p=None,
         pad_token_id=tokenizer.pad_token_id,
     )
     return tokenizer.decode(output[0], skip_special_tokens=True)
-
-
-def multimodal_eval(prompt, is_lora, base_path, lora_path):
-    base_model = AutoModel.from_pretrained(
-        base_path, torch_dtype=torch.bfloat16, device_map="auto"
-    )
 
 
 def print_modules(module, base_path, lora_path):
@@ -110,8 +106,8 @@ def run_ultravox_pipe(prompt):
         model="fixie-ai/ultravox-v0_3",
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
-        device_map="auto",
     )
+    pipe.model.tie_weights()
     turns = [
         {"role": "user", "content": prompt},
     ]
@@ -121,9 +117,20 @@ def run_ultravox_pipe(prompt):
 
 def run_ultravox(prompt, is_lora, lora_path):
     print(f"prompt is {prompt}")
-    model = AutoModel.from_pretrained(
-        "fixie-ai/ultravox-v0_3", torch_dtype=torch.bfloat16, trust_remote_code=True
+
+    base_model = AutoModel.from_pretrained(
+        "fixie-ai/ultravox-v0_3",
+        torch_dtype=torch.bfloat16,
+        trust_remote_code=True,
     )
+    base_model.tie_weights()
+    base_model.to(device="cuda")
+    if is_lora:
+        print("INFO: using lora model")
+        model = load_lora_model(base_model, lora_path)
+    else:
+        model = base_model
+
     model.eval()
     processor = AutoProcessor.from_pretrained(
         "fixie-ai/ultravox-v0_3", trust_remote_code=True
@@ -134,11 +141,13 @@ def run_ultravox(prompt, is_lora, lora_path):
     text = processor.tokenizer.apply_chat_template(
         turns, add_generation_prompt=True, tokenize=False
     )
-    model_inputs = processor(text=text)
-    print(model_inputs)
+    _model_inputs = processor(text=text)
+    model_inputs = {key: value.to(model.device) for key, value in _model_inputs.items()}
+
+    outputs = model.generate(**model_inputs, do_sample=False, max_new_tokens=1000)
+
     input_len = model_inputs["input_ids"].shape[1]
-    outputs = model.generate(**model_inputs, do_sample=False)
-    print(processor.tokenizer.decode(outputs[0][input_len:]))
+    print(processor.tokenizer.decode(outputs[0][input_len:], skip_special_token=True))
 
 
 def main():
