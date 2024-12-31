@@ -33,7 +33,6 @@ def load_lora_model(base_model, lora_path):
         device_map="auto",
         remote_code=True,
     )
-    print(lora_model.get_model_status())
     return lora_model
 
 
@@ -50,7 +49,6 @@ def eval(prompt, is_lora, base_path, lora_path):
         model = load_base_model(base_path)
 
     # Switch to evaluation mode
-    print(f"INFO: model is loaded with precision {model.dtype}")
     model.eval()
 
     tokenizer = AutoTokenizer.from_pretrained(base_path)
@@ -128,6 +126,7 @@ def run_ultravox(prompt, is_lora, lora_path):
     if is_lora:
         print("INFO: using lora model")
         model = load_lora_model(base_model, lora_path)
+        print(model)
     else:
         model = base_model
 

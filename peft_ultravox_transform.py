@@ -11,8 +11,8 @@ def transform_module_names(state_dict):
     """
     transformed_state_dict = {}
     for key, value in state_dict.items():
-        print(key)
-        new_key = key.replace("lora_", "custom_lora_")  # Example transformation
+
+        new_key = key.replace("base_model.model", "base_model.model.language_model")  # Example transformation
         transformed_state_dict[new_key] = value
     return transformed_state_dict
 
@@ -22,7 +22,7 @@ def transform(api, source_repo, repo_path):
     # Step 1: Get the list of files from the source repository
     repo_info = api.repo_info(repo_id=source_repo)
     adapter_files = [file.rfilename for file in repo_info.siblings if file.rfilename.endswith(".safetensors")]
-    config_files = [file.rfilename for file in repo_info.siblings if file.rfilename.endswith(".json")]
+    config_files = [file.rfilename for file in repo_info.siblings if file.rfilename.endswith("adapter_config.json")]
 
     # Download all required files
     downloaded_files = {}
@@ -50,7 +50,7 @@ def transform(api, source_repo, repo_path):
     # Step 4: Push changes to the new repository
     # repo.push_to_hub(commit_message="Add transformed adapter with multiple safetensor files")
 
-    print(f"Transformed adapter pushed to: https://huggingface.co/{target_repo}")
+    print(f"Transformed adapter pushed to: {repo_path}")
 
 
 def push_hf(target_repo, target_repo_local_path):
@@ -75,4 +75,5 @@ if __name__ == "__main__":
     parser.add_argument("--target-repo-local-path", required=True, help="")
     api = HfApi()
     args = parser.parse_args()
+    os.makedirs(args.target_repo_local_path, exist_ok=True)
     transform(api=api, source_repo=args.source_repo, repo_path=args.target_repo_local_path)
